@@ -1,0 +1,171 @@
+```{r set-options, echo=FALSE, cache=FALSE}
+## Set Options
+options(width=120)
+opts_chunk$set(comment = "", warning = FALSE, message = FALSE, echo = TRUE, tidy = TRUE, size="small")
+#read_chunk("some/script/I/want/to/load.R")
+
+## Read Data
+Incidents_1<-read.csv("SFPD_Incidents_-2013.11.01-2014.01.31.csv")
+Incidents_2<-read.csv("SFPD_Incidents_2014.02.01-2014.04.27.csv")
+Incidents_3<-read.csv("SFPD_Incidents_2014.04.20-2014.04.30.csv")
+Incidents<-unique(rbind(Incidents_1,Incidents_2,Incidents_3))
+attach(Incidents)
+
+# Install Packages
+install.packages(c("lubridate","qcc","knitr"))
+require(lubridate)
+require(qcc)
+source("http://bit.ly/dasi_inference")
+```
+### SFPD Incidents 11/1/2013 to 04/30/2014
+Judging by data derived from the SFPD Crime Incident Reporting system, was there a relationship between the Police District in San Francisco and the Category of Police Incident during the six month period from November, 2013 thru April, 2014 ?
+
+### Introduction:
+As a resident of San Francisco, I am curious to gain a better understanding of Police Incidents in my city.  I would like to know if certain types of incidents occur in higher concentrations within some Police Districts over others.  This analysis is relevant and important to all city residents, city planners, and those who will decide which neighborhoods are suitable for their life activities with regard to certain types of crime.
+
+### Data:
+The data for this analysis include the entire population of all Police Incidents derived from SFPD Crime Incident Reporting system during the time period.  Each observational case is a single Police Incident.  Both variables of interest are categorical and non-ordinal: **"PdDistrict"** and **"Category"**.
+
+This analysis is a retrospective observational study.  Incident data are collected in a way that does not directly interfere with how the data arose, i.e. we have merely "observed" the incidents after they occurred.  This observational study is retrospective because it uses data from the past.  Hence, the analysis seeks only to establish an association between the explanatory and response variables and is not sufficient to determine causation.
+
+Because the data set contains incidents from only the three months, we will be cautious to avoid generalizing conclusions to time frames greatly beyond the three months in question.  Potential sources of bias that prevent generalizing further include the year, the season, or other other  variability in the pattern of police incidents by neighborhood over time.
+
+### Exploratory data analysis:
+Firstly, there were **61475** incidents during the date range: **2013-11-01** to **2014-04-30**.  This is roughly **~10k incidents per month**:
+```{r}
+dates<-as.Date(Incidents$Date,format='%m/%d/%Y')
+range(dates)
+
+nrow(Incidents)
+
+table(year(dates),months(dates))
+```
+
+There are **10 Districts** in total, ranging from Bayview to the Tenderloin, shown below sequenced by Incident count.
+```{r fig.height=4, fig.width=15}
+# Sort & Plot Police District
+Incidents$PdDistrict <-factor(Incidents$PdDistrict, levels=names(sort(table(Incidents$PdDistrict), decreasing=TRUE)))
+plot(Incidents$PdDistrict,main="Count of Incidents by PdDistrict", sub="Sort Descending", xlab="PdDistrict",ylab="Incident Count")
+```
+
+While there are **36 Categories**, ranging from ARSON to WEAPON LAWS, **the top 11 Categories** account for **90% of all Police Incidents**:
+```{r fig.height=6, fig.width=20}
+# Sort and Calculate the Proportion of Total Incidents in the Top Eleven Categories
+Incidents$Category <- factor(Incidents$Category, levels=names(sort(table(Incidents$Category), decreasing=TRUE)))
+sum(table(Incidents$Category)[1:11])/nrow(Incidents)
+# Pareto Chart
+pareto.chart(table(Incidents$Category))
+```
+
+The pareto analysis above shows the cumulative frequency of all Categories of Incident.
+
+### Preparation:
+Because **the top 22 Categories** account for **99% of all Police Incidents**, the remainder of this analsyis will lump the long tail into "OTHER OFFENCES".  See Appendix A for the R code behind this data manipulation.
+
+```{r echo=FALSE, cache=FALSE}
+Cat.Orig<-levels(Incidents$Category)
+Cat.New<-Cat.Orig[1:22]
+Cat.New[23:length(Cat.Orig)]<-rep("OTHER OFFENSES",length(Cat.Orig)-22)
+  Cat.New
+Map.Table<-data.frame(Cat.Orig,Cat.New)
+Incidents<-merge(x=Incidents,y=Map.Table, by.x="Category",by.y="Cat.Orig")
+Incidents$Cat.New <- factor(Incidents$Cat.New, levels=names(sort(table(Incidents$Cat.New), decreasing=TRUE)))
+names(Incidents)
+levels(Incidents$Category)
+levels(Incidents$Cat.New)
+dataset<-Incidents[,c("Cat.New","Date","PdDistrict")]
+colnames(dataset)<-c("Category","Date","PdDistrict")
+attach(dataset)
+````
+
+### Inference:
+As a hypothesis, I suspect that some Categories of Incident will occur with higher frequency within some Police Districts. In other words, I suspect that Category and Police District are associated.  The structure of the test is as follows:
+
+   - H_0: Incident Category and Police District are independent.
+   - H_A: Incident Category and Police District are dependent.
+
+Since both are multi-leveled categorical variables, when dealing with counts & investigating how far the observed counts are from the expected, a Chi-squared hypothesis test for independence is an appropriate technique.
+
+Let's first check the necessary conditions, before conducting the test.  The independence condition is met, as we have no reason to believe that individual Police Incidents in San Francisco are not independent from each other.  As well, each Incident contributes to only a single cell in the Chi-Squared table.  In other words: each Incident will have only one Category and occurs in only a one District.  For the sample size condition, each combination of Incident & Category **do** have at least 5 expected cases.  The meeting of this condition was aided by chopping off the lengthy tail & focusing on only the TopEleven Incident Categories.
+
+Now to run the Chi-Squared independence test, which also provides a nice overview of the TopEleven data set:
+```{r}
+inference(Category,PdDistrict,type="ht",method="theoretical",est="proportion",sum_stats=FALSE,eda_plot=FALSE, inf_plot=FALSE,alternative="greater")
+```
+
+#### Results of the Chi-Squared Test for Indepencence 
+From the **p-value < 2.2e-16** we can determine that, if the null hypothesis were true, then the probability of finding the observed distribution of Incident Category and Police District to be **very nearly zero**.  Hence, the observed data provide good reason to conclude that the Police District and Incident Category were associated during the dates of 11/2013 thru 04/2014.
+
+### Additional Analysis
+Now that we've established a relationship exists, let us briefly examine the proportion of Incidents for each Category within each District.  Side-by-side boxplots of the frequency proportions are appropriate, and we can see below that the frequency of **Larceny/Theft** Incidents is an outlier in every district except "TENDERLOIN".  Moreover, in all districts with more than one outlier category, **Larceny/Theft** has the highest frequency proportion.  For this reason, let us also compute the mean frequency of **Larceny/Theft** Incidents across all Districts and add this as a reference line in red to the side-by-side boxplots.  Visually, the topmost outlier dot in each District will be **Larceny/Theft**.
+
+
+```{r fig.height=4, fig.width=15}
+# Create a Table of the Proportion of Incidents for each Category, by District
+TEprop<-(as.data.frame.matrix(prop.table(table(Category,PdDistrict))))
+# Save the outliers to a vector & print side-by-side Boxplots
+outliers <- boxplot(TEprop, plot=TRUE)$out
+# In Each District, identify: which are the Categories with an outlier proportion ?
+for(district in 1:ncol(TEprop)){
+  PdDistrict<-(colnames(TEprop[district]))
+  Cat<-rownames(TEprop[which(TEprop[district][,1] %in% outliers),])
+  print(c(PdDistrict,Cat))
+}
+# Horizontal reference line for the mean proportion of Larceny/Theft Incidents across all Districts
+abline(h=mean(as.numeric(TEprop[1,])),col="red")
+```
+
+
+### Conclusions
+We've learned that, during the dates examined, 11 of 36 Categories account for 90% of all Police Incidents in San Francisco.  We have also found Police District & Incident Category to be associated.  We've drawn a visual to highlight the districts which have a proportion of Incidents above & below the mean frequency for Larceny/Theft, which is an outlier in all but one of the districts.  From these charts, it is apparent that some Districts do have a visibly higher frequency of Larceny/Theft than others.
+
+While the Chi-Square test does not provide the tools to identify which districts and which categories are responsible for the low p-value in the test.  Extreme outlier values for **Larceny/Theft** do give a non-scientific indication.
+
+It will be interesting to pursue additional research to build upon this analysis.  For example:
+   - In which District is the frequency of Larceny/Theft statistically significant ?
+   - Are these results observable across a broader range of dates ?
+   - If so, can the conclusions be generalized to all San Francisco Police Incidents across all dates ?
+
+### Curiosities
+What explains the precipitous drop in total incidents during the few days around Christmas and New Years ?  Is it because the criminals are on vacation, or the police, or both ?
+
+```{r}
+plot(Date)
+````
+
+
+### Reference
+The data from this analysis are freely available from the city of San Francisco, at the following URL:
+   - https://data.sfgov.org/Public-Safety/SFPD-Incidents-Previous-Three-Months/tmnf-yvry
+
+### Appendix A
+R code employed to lump Categories 21 thru 36 of the long tail into "OTHER OFFENCES" and produce the **dataset** for analysis as only a subset of the original columns.
+
+```{r}
+Incidents_1<-read.csv("SFPD_Incidents_-2013.11.01-2014.01.31.csv")
+Incidents_2<-read.csv("SFPD_Incidents_2014.02.01-2014.04.27.csv")
+Incidents_3<-read.csv("SFPD_Incidents_2014.04.20-2014.04.30.csv")
+Incidents<-unique(rbind(Incidents_1,Incidents_2,Incidents_3))
+
+Incidents$Category <- factor(Incidents$Category, levels=names(sort(table(Incidents$Category), decreasing=TRUE)))
+Cat.Orig<-levels(Incidents$Category)
+Cat.New<-Cat.Orig[1:20]
+Cat.New[21:length(Cat.Orig)]<-rep("OTHER OFFENSES",length(Cat.Orig)-20)
+  Cat.New
+Map.Table<-data.frame(Cat.Orig,Cat.New)
+Incidents<-merge(x=Incidents,y=Map.Table, by.x="Category",by.y="Cat.Orig")
+Incidents$Cat.New <- factor(Incidents$Cat.New, levels=names(sort(table(Incidents$Cat.New), decreasing=TRUE)))
+names(Incidents)
+levels(Incidents$Category)
+levels(Incidents$Cat.New)
+dataset<-Incidents[,c("Cat.New","Date","PdDistrict")]
+colnames(dataset)<-c("Category","Date","PdDistrict")
+attach(dataset)
+```
+
+
+### Appendix B
+For reference, a sample of 50 lines from the data set used for analysis:
+```{r}
+dataset[250:300,]
+```
